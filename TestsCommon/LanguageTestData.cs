@@ -24,4 +24,8 @@ namespace TestsCommon
         string JavaCoreVersion,
         string JavaLibVersion,
         string JavaPreviewLibPath);
+
+    public record ExecuteTestData(
+        LanguageTestData languageTestData,
+        string fileContent);
 }
