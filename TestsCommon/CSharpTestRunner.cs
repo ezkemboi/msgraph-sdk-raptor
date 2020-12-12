@@ -17,7 +17,37 @@ namespace TestsCommon
         /// <summary>
         /// template to compile snippets in
         /// </summary>
-        private const string SDKShellTemplate = @"using System;
+        private const string CompilationTemplate = @"using System;
+using Microsoft.Graph;
+using MsGraphSDKSnippetsCompiler;
+using Newtonsoft.Json.Linq;
+using System.Collections.Generic;
+using System.Text;
+using System.Threading.Tasks;
+      
+// Disambiguate colliding namespaces
+using DayOfWeek = Microsoft.Graph.DayOfWeek;
+using TimeOfDay = Microsoft.Graph.TimeOfDay;
+using KeyValuePair = Microsoft.Graph.KeyValuePair;
+      
+public class GraphSDKTest
+{
+    private IAuthenticationProvider authProvider = null;
+
+    private async void Main()
+    {
+        authProvider = AuthenticationProvider.GetIAuthenticationProvider();
+
+          #region msgraphsnippets
+          //insert-code-here
+          #endregion
+      }
+}";
+
+        /// <summary>
+        /// template to compile snippets in
+        /// </summary>
+        private const string ExecutionTemplate = @"using System;
 using Microsoft.Graph;
 using MsGraphSDKSnippetsCompiler;
 using Newtonsoft.Json.Linq;
@@ -40,6 +70,7 @@ public class GraphSDKTest
     }
 }";
 
+
         /// <summary>
         /// matches csharp snippet from C# snippets markdown output
         /// </summary>
@@ -50,8 +81,6 @@ public class GraphSDKTest
         /// uses Singleline so that (.*) matches new line characters as well
         /// </summary>
         private static readonly Regex RegExp = new Regex(Pattern, RegexOptions.Singleline | RegexOptions.Compiled);
-
-        
 
         /// <summary>
         /// 1. Fetches snippet from docs repo
@@ -76,20 +105,72 @@ public class GraphSDKTest
 
             var codeSnippetFormatted = match.Groups[1].Value
                 .Replace("\r\n", "\r\n        ")            // add indentation to match with the template
-                .Replace("\r\n        \r\n", "\r\n\r\n")    // remove indentation added to empty lines
-                .Replace("\t", "    ")                      // do not use tabs
-                .Replace("\r\n\r\n\r\n", "\r\n\r\n");       // do not have two consecutive empty lines
+              .Replace("\r\n        \r\n", "\r\n\r\n")    // remove indentation added to empty lines
+              .Replace("\t", "    ")                      // do not use tabs
+              .Replace("\r\n\r\n\r\n", "\r\n\r\n");       // do not have two consecutive empty lines
 
-            var codeToCompile = BaseTestRunner.ConcatBaseTemplateWithSnippet(codeSnippetFormatted, SDKShellTemplate);
+            var codeToCompile = BaseTestRunner.ConcatBaseTemplateWithSnippet(codeSnippetFormatted, CompilationTemplate);
 
             // Compile Code
             var microsoftGraphCSharpCompiler = new MicrosoftGraphCSharpCompiler(testData.FileName, testData.DllPath);
             var compilationResultsModel = microsoftGraphCSharpCompiler.CompileSnippet(codeToCompile, testData.Version);
-            var microsoftGraphCSharpCompiler = new MicrosoftGraphCSharpCompiler(testData.FileName);
-            var compilationResultsModel = microsoftGraphCSharpCompiler.RunSnippet(codeToCompile, testData.Version);
+
+            if (compilationResultsModel.Success)
+            {
+                Assert.Pass();
+            }
+
             var compilationOutputMessage = new CompilationOutputMessage(compilationResultsModel, codeToCompile, testData.DocsLink, testData.KnownIssueMessage, testData.IsKnownIssue);
 
-            if (!compilationResultsModel.IsCompilationSuccessful)
+            // environment variable for sources directory is defined only for cloud runs
+            var config = AppSettings.Config();
+            if (bool.Parse(config.GetSection("IsLocalRun").Value)
+                && bool.Parse(config.GetSection("GenerateLinqPadOutputInLocalRun").Value))
+            {
+                WriteLinqFile(testData, codeSnippetFormatted);
+            }
+
+            Assert.Fail($"{compilationOutputMessage}");
+        }
+
+        /// <summary>
+        /// 1. Fetches snippet from docs repo
+        /// 2. Asserts that there is one and only one snippet in the file
+        /// 3. Wraps snippet with compilable template
+        /// 4. Attempts to compile and reports errors if there is any
+        /// </summary>
+        /// <param name="executeTestData">Test data containing information such as snippet file name</param>
+        public static void Execute(ExecuteTestData executeTestData)
+        {
+            if (executeTestData == null)
+            {
+                throw new ArgumentNullException(nameof(executeTestData));
+            }
+
+            var testData = executeTestData.LanguageTestData;
+
+            var match = RegExp.Match(executeTestData.FileContent);
+            Assert.IsTrue(match.Success, "Csharp snippet file is not in expected format!");
+
+            var codeSnippetFormatted = match.Groups[1].Value
+                .Replace("\r\n", "\r\n        ")            // add indentation to match with the template
+                .Replace("\r\n        \r\n", "\r\n\r\n")    // remove indentation added to empty lines
+                .Replace("\t", "    ")                      // do not use tabs
+                .Replace("\r\n\r\n\r\n", "\r\n\r\n");       // do not have two consecutive empty lines
+
+            var codeToCompile = BaseTestRunner.ConcatBaseTemplateWithSnippet(codeSnippetFormatted, ExecutionTemplate);
+
+            // Compile Code
+            var microsoftGraphCSharpCompiler = new MicrosoftGraphCSharpCompiler(testData.FileName, testData.DllPath);
+            var executionResultsModel = microsoftGraphCSharpCompiler.ExecuteSnippet(codeToCompile, testData.Version);
+            var compilationOutputMessage = new CompilationOutputMessage(
+                executionResultsModel.CompilationResult,
+                codeToCompile,
+                testData.DocsLink,
+                testData.KnownIssueMessage,
+                testData.IsKnownIssue);
+
+            if (!executionResultsModel.CompilationResult.Success)
             {
                 // environment variable for sources directory is defined only for cloud runs
                 var config = AppSettings.Config();
@@ -102,11 +183,11 @@ public class GraphSDKTest
                 Assert.Fail($"{compilationOutputMessage}");
             }
 
-            if (!compilationResultsModel.IsRunSuccessful)
+            if (!executionResultsModel.Success)
             {
-                Assert.Fail($"{compilationOutputMessage}{Environment.NewLine}{compilationResultsModel.ExceptionMessage}");
+                Assert.Fail($"{compilationOutputMessage}{Environment.NewLine}{executionResultsModel.ExceptionMessage}");
             }
-            
+
             Assert.Pass(compilationOutputMessage.ToString());
         }
 

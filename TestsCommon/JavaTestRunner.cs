@@ -113,7 +113,7 @@ public class App
             {
                 var compilationResultsModel = microsoftGraphCSharpCompiler.CompileSnippet(codeToCompile, testData.Version);
 
-                if (compilationResultsModel.IsSuccess)
+                if (compilationResultsModel.Success)
                 {
                     Assert.Pass();
                 } 

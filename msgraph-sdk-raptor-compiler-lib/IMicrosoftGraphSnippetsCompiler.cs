@@ -4,6 +4,8 @@ namespace MsGraphSDKSnippetsCompiler
 {
     public interface IMicrosoftGraphSnippetsCompiler
     {
-        CompilationResultsModel RunSnippet(string codeSnippet, Versions version);
+        CompilationResultsModel CompileSnippet(string codeSnippet, Versions version);
+
+        ExecutionResultsModel ExecuteSnippet(string codeSnippet, Versions version);
     }
 }

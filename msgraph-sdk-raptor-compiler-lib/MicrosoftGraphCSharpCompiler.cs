@@ -14,7 +14,6 @@ using System.IO;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Runtime.Loader;
 using System.Threading.Tasks;
 
@@ -39,7 +38,67 @@ namespace MsGraphSDKSnippetsCompiler
         /// </summary>
         /// <param name="codeSnippet">The code snippet to be compiled.</param>
         /// <returns>CompilationResultsModel</returns>
-        public CompilationResultsModel RunSnippet(string codeSnippet, Versions version)
+        public CompilationResultsModel CompileSnippet(string codeSnippet, Versions version)
+        {
+            SyntaxTree syntaxTree = CSharpSyntaxTree.ParseText(codeSnippet);
+
+            string assemblyName = Path.GetRandomFileName();
+            string commonAssemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location);
+            string graphAssemblyPathV1 = Path.GetDirectoryName(typeof(GraphServiceClient).Assembly.Location);
+            string graphAssemblyPathBeta = Path.GetDirectoryName(typeof(beta.Microsoft.Graph.GraphServiceClient).Assembly.Location);
+
+            List<MetadataReference> metadataReferences = new List<MetadataReference>
+            {
+                MetadataReference.CreateFromFile(Path.Combine(commonAssemblyPath, "System.Private.CoreLib.dll")),
+                MetadataReference.CreateFromFile(Path.Combine(commonAssemblyPath, "System.Console.dll")),
+                MetadataReference.CreateFromFile(Path.Combine(commonAssemblyPath, "System.Runtime.dll")),
+                MetadataReference.CreateFromFile(Path.Combine(commonAssemblyPath, "netstandard.dll")),
+                MetadataReference.CreateFromFile(Path.Combine(Path.GetDirectoryName(typeof(IAuthenticationProvider).Assembly.Location), "Microsoft.Graph.Core.dll")),
+                MetadataReference.CreateFromFile(Path.Combine(Path.GetDirectoryName(typeof(AuthenticationProvider).Assembly.Location), "msgraph-sdk-raptor-compiler-lib.dll")),
+                MetadataReference.CreateFromFile(Path.Combine(Path.GetDirectoryName(typeof(Task).Assembly.Location), "System.Threading.Tasks.dll")),
+                MetadataReference.CreateFromFile(Path.Combine(Path.GetDirectoryName(typeof(JToken).Assembly.Location), "Newtonsoft.Json.dll")),
+                MetadataReference.CreateFromFile(Path.Combine(Path.GetDirectoryName(typeof(HttpClient).Assembly.Location), "System.Net.Http.dll")),
+                MetadataReference.CreateFromFile(Path.Combine(Path.GetDirectoryName(typeof(Expression).Assembly.Location), "System.Linq.Expressions.dll")),
+            };
+
+            //Use the right Microsoft Graph Version
+            if (_dllPath != null && _dllPath != string.Empty)
+            {
+                if (!System.IO.File.Exists(_dllPath))
+                {
+                    throw new ArgumentException($"Provided dll path {_dllPath} doesn't exist!");
+                }
+
+                metadataReferences.Add(MetadataReference.CreateFromFile(_dllPath));
+            }
+            else if (version == Versions.V1)
+            {
+                metadataReferences.Add(MetadataReference.CreateFromFile(Path.Combine(graphAssemblyPathV1, "Microsoft.Graph.dll")));
+            }
+            else
+            {
+                metadataReferences.Add(MetadataReference.CreateFromFile(Path.Combine(graphAssemblyPathBeta, "Microsoft.Graph.Beta.dll")));
+            }
+
+            var compilation = CSharpCompilation.Create(
+               assemblyName,
+               syntaxTrees: new[] { syntaxTree },
+               references: metadataReferences,
+               options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+            using var memoryStream = new MemoryStream();
+            var emitResult = compilation.Emit(memoryStream);
+            CompilationResultsModel results = GetCompilationResults(emitResult);
+
+            return results;
+        }
+
+        /// <summary>
+        ///     Returns CompilationResultsModel which has the results status and the compilation diagnostics. 
+        /// </summary>
+        /// <param name="codeSnippet">The code snippet to be compiled.</param>
+        /// <returns>CompilationResultsModel</returns>
+        public ExecutionResultsModel ExecuteSnippet(string codeSnippet, Versions version)
         {
             SyntaxTree syntaxTree = CSharpSyntaxTree.ParseText(codeSnippet);
 
@@ -89,9 +148,11 @@ namespace MsGraphSDKSnippetsCompiler
                options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
             var (emitResult, assembly) = GetEmitResult(compilation);
-            CompilationResultsModel results = GetCompilationResults(emitResult);
+            CompilationResultsModel compilationResult = GetCompilationResults(emitResult);
 
-            if (results.IsCompilationSuccessful)
+            string exceptionMessage = null;
+            bool success = false;
+            if (compilationResult.Success)
             {
                 try
                 {
@@ -107,15 +168,15 @@ namespace MsGraphSDKSnippetsCompiler
                     var authProvider = new ClientCredentialProvider(confidentialClientApp, "https://graph.microsoft.com/.default");
                     var task = instance.Main(authProvider) as Task;
                     task.Wait();
-                    results.IsRunSuccessful = true;
+                    success = true;
                 }
                 catch (AggregateException ae)
                 {
-                    results.ExceptionMessage = ae.InnerException.Message;
+                    exceptionMessage = ae.InnerException.Message;
                 }
             }
 
-            return results;
+            return new ExecutionResultsModel(compilationResult, success, exceptionMessage);
         }
 
         /// <summary>
@@ -147,25 +208,6 @@ namespace MsGraphSDKSnippetsCompiler
             var failures = emitResult.Success
                 ? null
                 : emitResult.Diagnostics.Where(diagnostic => diagnostic.IsWarningAsError || diagnostic.Severity == DiagnosticSeverity.Error);
-            CompilationResultsModel compilationResultsModel = new CompilationResultsModel();
-
-            if (!emitResult.Success)
-            {
-                // We are only interested with warnings and errors hence the diagnostics filter
-                IEnumerable<Microsoft.CodeAnalysis.Diagnostic> failures = emitResult.Diagnostics.Where(diagnostic =>
-                    diagnostic.IsWarningAsError ||
-                    diagnostic.Severity == DiagnosticSeverity.Error);
-
-                compilationResultsModel.IsCompilationSuccessful = false;
-                compilationResultsModel.Diagnostics = failures;
-                compilationResultsModel.MarkdownFileName = _markdownFileName;
-            }
-            else
-            {
-                compilationResultsModel.IsCompilationSuccessful = true;
-                compilationResultsModel.Diagnostics = null;             
-                compilationResultsModel.MarkdownFileName = _markdownFileName;
-            }
 
             return new CompilationResultsModel(emitResult.Success, failures, _markdownFileName);
         }

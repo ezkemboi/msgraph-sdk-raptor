@@ -3,12 +3,7 @@ using System.Collections.Generic;
 
 namespace MsGraphSDKSnippetsCompiler.Models
 {
-    public class CompilationResultsModel
-    {
-        public bool IsCompilationSuccessful { get; set; }
-        public IEnumerable<Diagnostic> Diagnostics { get; set; }
-        public string MarkdownFileName { get; set; }
-        public string ExceptionMessage { get; set; }
-        public bool IsRunSuccessful { get; set; } = false;
-    }
+    public record CompilationResultsModel(bool Success, IEnumerable<Diagnostic> Diagnostics, string MarkdownFileName);
+
+    public record ExecutionResultsModel(CompilationResultsModel CompilationResult, bool Success, string ExceptionMessage = null);
 }
